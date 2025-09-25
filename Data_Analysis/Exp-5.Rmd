@@ -1,0 +1,153 @@
+---
+title: "Exp-5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(RColorBrewer)
+library(bruceR)
+library(readxl)
+library(Metrics)
+```
+
+```{r read the data and pre-process, include=FALSE}
+subs <- dir(path = "./Exp-5")
+subs <- mixedsort(subs)
+trialnum <- 100
+datall <- data.frame()
+Choice <- data.frame()
+
+for (i in 1:length(subs))
+{
+  dat <- read.table(paste0("./Exp-5",subs[i]), header = FALSE, sep = ";", na.strings = "NA", dec = ".", strip.white = TRUE)
+  dat <- dat[,c(1,3:7)]
+  dat <- cbind(rep(i,nrow(dat)),dat)
+  names(dat) <- c("Sub","Trial","MyPosition","OtherPosition","Condition","Choice","Confidence")
+  
+  # get the maximal and minimal confidence of each subject
+  max_confidence <- max(dat$Confidence)
+  min_confidence <- min(dat$Confidence)
+  
+  for (j in 1:trialnum) 
+  {
+    subdat <- subset(dat,Trial==j)
+    
+    # compute the relative level of confidence
+    subdat$Confidence <- (subdat$Confidence - min_confidence)/(max_confidence - min_confidence)
+    
+    Choice <- rbind(Choice,subdat)
+    print(paste("Sub",i,"Trial",j,sep = "-"))
+  }
+}
+
+
+# get the final choice data
+Choice <- cbind(Choice,rep(0,nrow(Choice)),rep(0,nrow(Choice)))
+names(Choice) <- c("Sub","Trial","MyPosition","OtherPosition","Condition","Choice_Other","Confidence","P_other","Type")
+
+Choice$P_other[which(Choice$MyPosition==1 & Choice$Choice_Other=="Door 2")] <- 1
+Choice$P_other[which(Choice$MyPosition==2 & Choice$Choice_Other=="Door 1")] <- 1
+Choice$Type[which(Choice$MyPosition==1 & Choice$OtherPosition==1)] <- "Type1"
+Choice$Type[which(Choice$MyPosition==2 & Choice$OtherPosition==2)] <- "Type1"
+Choice$Type[which(Choice$MyPosition==1 & Choice$OtherPosition==2)] <- "Type2"
+Choice$Type[which(Choice$MyPosition==2 & Choice$OtherPosition==1)] <- "Type2"
+
+Choice_subjectfinal <- ddply(Choice,c("Sub","Condition","Type"),summarise,Mean_P = mean(P_other),Mean_Confidence = mean(Confidence))
+Choice_final <- ddply(Choice_subjectfinal,c("Condition","Type"),summarise,P = mean(Mean_P),SE_choice = (sd(Mean_P)/sqrt(length(subs))),Confidence = mean(Mean_Confidence),SE_confidence = (sd(Mean_Confidence)/sqrt(length(subs))))
+
+# write.csv(Choice_subjectfinal,"Subject_Choice_all.csv")
+write.csv(Choice_subjectfinal[which(Choice_subjectfinal$Type=="Type1"),],"Subject_Choice.csv")
+```
+
+```{r plot the bar plot of final choice}
+Choice_final_plot <- Choice_final[which(Choice_final$Condition!=4 & Choice_final$Type=="Type1"),]
+Choice_final_plot$Condition[which(Choice_final_plot$Condition==1)] <- "L1"
+Choice_final_plot$Condition[which(Choice_final_plot$Condition==2)] <- "L2"
+Choice_final_plot$Condition[which(Choice_final_plot$Condition==3)] <- "L3"
+Choice_final_plot$Condition[which(Choice_final_plot$Condition==5)] <- "Nature"
+
+Choice_final_plot$Type <- as.factor(Choice_final_plot$Type)
+Choice_final_plot$Condition <- factor(Choice_final_plot$Condition,levels = c("L1","L2","L3","Nature"))
+
+ggplot(data = Choice_final_plot,aes(x=Condition,y=P)) + geom_bar(stat = "identity",aes(fill=Condition),colour="black",width = 0.4,size=1) + geom_errorbar(aes(ymin=P-SE_choice,ymax=P+SE_choice),width=0.1,size=1,position=position_dodge(0.5)) + ylab("Possibility of passing through Door 2") + xlab("Clue Type") + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic() + scale_fill_manual(values = c(brewer.pal(9,"Blues")[3],brewer.pal(9,"Blues")[4],brewer.pal(9,"Blues")[5],brewer.pal(9,"Blues")[1])) + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ ggsave("BarPlot_Choice_P.pdf",width = 25, height = 15,units = "cm")
+```
+
+```{r plot the bar plot of final confidence}
+ggplot(data = Choice_final_plot,aes(x=Condition,y=Confidence)) + geom_bar(stat = "identity",aes(fill=Condition),colour="black",width = 0.4,size=1) + geom_errorbar(aes(ymin=Confidence-SE_confidence,ymax=Confidence+SE_confidence),width=0.1,size=1,position=position_dodge(0.5)) + ylab("Confidence of choice") + xlab("Clue Type") + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic() + scale_fill_manual(values = c(brewer.pal(9,"Blues")[3],brewer.pal(9,"Blues")[4],brewer.pal(9,"Blues")[5],brewer.pal(9,"Blues")[1])) + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ ggsave("BarPlot_Choice_Confidence.pdf",width = 25, height = 15,units = "cm")
+```
+
+```{r statistic test of choice possibility}
+subject_sta_test <- Choice_subjectfinal[which(Choice_subjectfinal$Type=="Type1"),]
+subject_sta_test <- subject_sta_test[,c(1,2,4)]
+subject_sta_test <- subject_sta_test[which(subject_sta_test$Condition!=4),]
+
+subject_sta_test$Condition[which(subject_sta_test$Condition==1)] <- "L1"
+subject_sta_test$Condition[which(subject_sta_test$Condition==2)] <- "L2"
+subject_sta_test$Condition[which(subject_sta_test$Condition==3)] <- "L3+"
+subject_sta_test$Condition[which(subject_sta_test$Condition==5)] <- "Nature"
+
+subject_sta_test$Condition <- factor(subject_sta_test$Condition,levels = c("L1","L2","L3+","Nature"))
+subject_sta_test$Sub <- as.factor(subject_sta_test$Sub)
+
+# F-test
+MANOVA(data = subject_sta_test,
+       subID = "Sub",
+       dv = "Mean_P",
+       within = "Condition",
+       sph.correction = "GG",
+       ) %>%
+  EMMEANS("Condition")
+
+```
+
+```{r statistic test of choice confidence}
+subject_sta_test_confidence <- Choice_subjectfinal[which(Choice_subjectfinal$Type=="Type1"),c(1,2,5)]
+subject_sta_test_confidence <- subject_sta_test_confidence[which(subject_sta_test_confidence$Condition!=4),]
+
+subject_sta_test_confidence$Condition[which(subject_sta_test_confidence$Condition==1)] <- "L1"
+subject_sta_test_confidence$Condition[which(subject_sta_test_confidence$Condition==2)] <- "L2"
+subject_sta_test_confidence$Condition[which(subject_sta_test_confidence$Condition==3)] <- "L3+"
+subject_sta_test_confidence$Condition[which(subject_sta_test_confidence$Condition==5)] <- "Nature"
+
+subject_sta_test_confidence$Condition <- factor(subject_sta_test_confidence$Condition,levels = c("L1","L2","L3+","Nature"))
+subject_sta_test_confidence$Sub <- as.factor(subject_sta_test_confidence$Sub)
+
+# F-test
+MANOVA(data = subject_sta_test_confidence,
+       subID = "Sub",
+       dv = "Mean_Confidence",
+       within = "Condition",
+       sph.correction = "GG") %>%
+  EMMEANS("Condition")
+```

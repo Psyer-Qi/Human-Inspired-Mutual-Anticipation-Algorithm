@@ -1,0 +1,249 @@
+---
+title: "Exp-6"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(rstatix)
+library(bruceR)
+library(RColorBrewer)
+```
+
+```{r read the data and pre-process, include=FALSE}
+subs <- dir(path = "./Exp-6")
+subs <- mixedsort(subs)
+trialnum <- 60
+datall <- data.frame()
+Path <- data.frame()
+Choice <- data.frame()
+for (i in 1:length(subs))
+{
+  dat <- read.table(paste0("./Exp-6",subs[i]), header = FALSE, sep = ";", na.strings = "NA", dec = ".", strip.white = TRUE)
+  dat <- dat[,1:9]
+  dat <- cbind(rep(i,nrow(dat)),dat)
+  names(dat) <- c("Sub","Trial","Time","MyPosition","OtherPosition","Percent","X","Y","Z","Stage") 
+  # stage means whether subject has already open the door;
+  
+  # select the condition in which "MyPosition == 1 & OtherPosition == 1" and "MyPosition == 2 & OtherPosition == 2"
+  dat <- dat[which((dat$MyPosition==1 & dat$OtherPosition==1) | (dat$MyPosition==2 & dat$OtherPosition==2)),]
+  
+  dat <- dat[which(dat$Stage=="true"),]
+  dat$Y[which(dat$Trial%%2==0)] <- (dat$Y[which(dat$Trial%%2==0)] - 300) *(-1)
+  
+  for (j in 1:trialnum) 
+  {
+    subdat <- subset(dat,Trial==j)
+    
+    if (nrow(subdat)==0){
+      next
+    }else{
+      
+      subdat <- subdat[which(subdat$X>1),]
+    
+      # add the pre-processed data to the data frame
+      datall <- rbind(datall,subdat)
+    
+      # do the linear interpolation of the path
+      subdat_revised <- subdat[,c(1,2,4:8)]
+      subdat_revised <- rbind(list(subdat_revised[1,1],subdat_revised[1,2],subdat_revised[1,3],subdat_revised[1,4],subdat_revised[1,5],0,0),subdat_revised)
+      x_step <- seq(1,350,len = 350)
+      subdat_revised <- subdat_revised[!duplicated(subdat_revised$X),]
+      subdat_revised <- arrange(subdat_revised,X)
+      subdat_revised <- na.omit(subdat_revised)
+      y_revised <- interp1(subdat_revised$X,subdat_revised$Y,x_step,'linear')
+  
+      subdat_final <- data.frame("Sub"=rep(i,350),"Trial"=rep(j,350),"MyPosition"=rep(subdat_revised$MyPosition[1],350),"OtherPosition"=rep(subdat_revised$OtherPosition[1],350),"Percent"=rep(subdat_revised$Percent[1],350))
+    subdat_final <- cbind(subdat_final,x_step,y_revised)
+    names(subdat_final) <- c("Sub","Trial","MyPosition","OtherPosition","Percent","X","Y")
+    
+      # judge which door the subject select
+      subdat_final <- cbind(subdat_final,rep("Door 1",nrow(subdat_final)))
+      names(subdat_final) <- c("Sub","Trial","MyPosition","OtherPosition","Percent","X","Y","Choice")
+      if (subdat_final[350,7] > 150){
+        subdat_final$Choice <- "Door 2"
+      }
+      
+      subdat_final <- cbind(subdat_final,rep(0,nrow(subdat_final)))
+      names(subdat_final) <- c("Sub","Trial","MyPosition","OtherPosition","Percent","X","Y","Choice","Possibility")
+      if (subdat_final$Choice[1]=="Door 2"){
+        subdat_final$Possibility <- 1
+      }
+      
+      # adjust the coordination of the start position;
+      subdat_final$Y <- subdat_final$Y - subdat_final$Y[1]
+    
+      # add the linear-interpolated data to the data frame
+      Path <- rbind(Path,subdat_final[,1:8])
+      Choice <- rbind(Choice,subdat_final[1,c(1,2,5,9)])
+    
+      print(paste("Sub",i,"Trial",j,sep = "-"))
+    }
+  }
+}
+
+Path_subjectfinal <- ddply(Path,c("Sub","Percent","X","Choice"),summarise,Mean_Y = mean(Y))
+Path_final <- ddply(Path_subjectfinal,c("Percent","X","Choice"),summarise,Y = mean(Mean_Y),SE = (sd(Mean_Y)/sqrt(length(subs))))
+
+Choice_subjectfinal <- ddply(Choice,c("Sub","Percent"),summarise,Mean_P = mean(Possibility))
+Choice_final <- ddply(Choice_subjectfinal,c("Percent"),summarise,P = mean(Mean_P),SE = (sd(Mean_P)/sqrt(length(subs))))
+```
+
+```{r plot the bar plot of final choice}
+Choice_final$Percent[which(Choice_final$Percent==1)] <- "L1"
+Choice_final$Percent[which(Choice_final$Percent==2)] <- "L2"
+Choice_final$Percent[which(Choice_final$Percent==3)] <- "L3"
+Choice_final$Percent[which(Choice_final$Percent==4)] <- "Blind"
+Choice_final$Percent[which(Choice_final$Percent==5)] <- "Nature"
+
+Choice_final$Percent <- factor(Choice_final$Percent,levels = c("L1","L2","L3","Blind","Nature"))
+
+ggplot(data = Choice_final[which(Choice_final$Percent!="Blind"),],aes(x=Percent,y=P)) + geom_bar(stat = "identity",aes(fill=Percent),colour="black",width = 0.4,size=1) + geom_errorbar(aes(ymin=P-SE,ymax=P+SE),width=0.1,size=1,position=position_dodge(0.5)) + geom_hline(yintercept = Choice_final$P[which(Choice_final$Percent=="Nature")],linetype = "dashed", size=1) + ylab("Possibility of passing through Door 2") + xlab("Clue type") + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic() + scale_fill_manual(values = c(brewer.pal(9,"Blues")[3],brewer.pal(9,"Blues")[4],brewer.pal(9,"Blues")[5],brewer.pal(9,"Blues")[1])) + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ ggsave("BarPlot_Choice.pdf",width = 25, height = 15,units = "cm")
+```
+
+```{r statistic test of choice possibility}
+subject_sta_test <- Choice_subjectfinal[which(Choice_subjectfinal$Percent!=4),]
+names(subject_sta_test) <- c("Sub","Condition","Mean_P")
+
+subject_sta_test$Condition[which(subject_sta_test$Condition==1)] <- "L1"
+subject_sta_test$Condition[which(subject_sta_test$Condition==2)] <- "L2"
+subject_sta_test$Condition[which(subject_sta_test$Condition==3)] <- "L3"
+subject_sta_test$Condition[which(subject_sta_test$Condition==5)] <- "Nature"
+
+subject_sta_test$Condition <- factor(subject_sta_test$Condition,levels = c("L1","L2","L3","Nature"))
+subject_sta_test$Sub <- as.factor(subject_sta_test$Sub)
+
+# F-test
+MANOVA(data = subject_sta_test,
+       subID = "Sub",
+       dv = "Mean_P",
+       within = "Condition",
+       sph.correction = "GG") %>%
+  EMMEANS("Condition")
+```
+
+```{r draw the X-Y plot}
+Path_final1 <- Path_final
+
+Path_final1$Percent[which(Path_final1$Percent==1)] <- "L1"
+Path_final1$Percent[which(Path_final1$Percent==2)] <- "L2"
+Path_final1$Percent[which(Path_final1$Percent==3)] <- "L3"
+Path_final1$Percent[which(Path_final1$Percent==4)] <- "Blind"
+Path_final1$Percent[which(Path_final1$Percent==5)] <- "Nature"
+
+Path_final1$Percent <- factor(Path_final1$Percent,levels = c("L1","L2","L3","Blind","Nature"))
+Path_final1$Choice <- as.factor(Path_final1$Choice)
+
+Path_final1_revised <- Path_final1[which(Path_final1$Percent!="L2" & Path_final1$Percent!="Blind" & Path_final1$Choice=="Door 2"),]
+
+# plot the path between "L1" and "Nature"
+Path_final_L1 <- Path_final1_revised[which(Path_final1_revised$Percent=="L1" | Path_final1_revised$Percent=="Nature"),]
+ggplot(data=Path_final_L1, aes(x=X, y=Y, group = interaction(Percent,Choice))) + geom_line(aes(color=Percent,linetype=Percent),size=2) + geom_ribbon(data = Path_final_L1[which(Path_final_L1$Percent=="L1"),],aes(ymin=Y-SE*1.96,ymax=Y+SE*1.96),alpha=0.15) + ylab("Y (cm)") + xlab("X (cm)") + scale_x_continuous(breaks=seq(0, 400, 100),expand=c(0,0)) + scale_y_continuous(breaks=seq(0, 300, 100),expand=c(0,0)) + coord_flip(xlim=c(0,400),ylim=c(0, 300)) + scale_color_manual(values = c(brewer.pal(9,"Blues")[3],"black")) + scale_linetype_manual(values = c("solid","dashed")) + theme_classic() + theme(axis.title = element_text(size=20, colour="black"),
+  axis.text  = element_text(size=14, colour="black"),
+  axis.line = element_line(size=0.5),
+  strip.text = element_text(size=14, colour="black"),
+  legend.text = element_text(size=20, colour="black", margin = margin(r = 20, unit = "pt")),
+  legend.title = element_blank(),
+  legend.position = "top",
+  axis.ticks = element_line(size=0.5),
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length = unit(-0.1, "cm"),
+  legend.key.width = unit(1.5, "cm"),
+  panel.grid.major = element_line(colour = NA),
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.minor = element_blank())
+ggsave("Path_L1.pdf",width = 10, height = 16, units = "cm")
+
+# plot the path between "L3" and "Nature"
+Path_final_L3 <- Path_final1_revised[which(Path_final1_revised$Percent=="L3" | Path_final1_revised$Percent=="Nature"),]
+ggplot(data=Path_final_L3, aes(x=X, y=Y, group = interaction(Percent,Choice))) + geom_line(aes(color=Percent,linetype=Percent),size=2) + geom_ribbon(data = Path_final_L3[which(Path_final_L3$Percent=="L3"),],aes(ymin=Y-SE*1.96,ymax=Y+SE*1.96),alpha=0.15) + ylab("Y (cm)") + xlab("X (cm)") + scale_x_continuous(breaks=seq(0, 400, 100),expand=c(0,0)) + scale_y_continuous(breaks=seq(0, 300, 100),expand=c(0,0)) + coord_flip(xlim=c(0,400),ylim=c(0, 300)) + scale_color_manual(values = c(brewer.pal(9,"Blues")[5],"black")) + scale_linetype_manual(values = c("solid","dashed")) + theme_classic() + theme(axis.title = element_text(size=20, colour="black"),
+  axis.text  = element_text(size=14, colour="black"),
+  axis.line = element_line(size=0.5),
+  strip.text = element_text(size=14, colour="black"),
+  legend.text = element_text(size=20, colour="black", margin = margin(r = 20, unit = "pt")),
+  legend.title = element_blank(),
+  legend.position = "top",
+  axis.ticks = element_line(size=0.5),
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length = unit(-0.1, "cm"),
+  legend.key.width = unit(1.5, "cm"),
+  panel.grid.major = element_line(colour = NA),
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.minor = element_blank())
+ggsave("Path_L3.pdf",width = 10, height = 16, units = "cm")
+
+```
+
+```{r calculate the AUC of different level of ToM and plot}
+Path_AUC <- Path_subjectfinal[which(Path_subjectfinal$Percent!=2),]
+Path_AUC <- Path_AUC[which(Path_AUC$Choice=="Door 2"),]
+
+data_AUC <- data.frame()
+for (i in 1:length(subs))  
+{
+  for (j in c(1,3,4,5)) 
+  {
+    subdat_auc <- subset(Path_AUC,Sub == i & Percent == j)
+    auc <- 350 * max(subdat_auc$Mean_Y) - sum(subdat_auc$Mean_Y)
+    data_AUC <- rbind(data_AUC,list(subdat_auc$Sub[1],subdat_auc$Percent[1],auc))
+    
+    print(paste("Sub",i,"Level",j,sep = "-"))
+  }
+}
+names(data_AUC) <- c("Sub","Level","AUC")
+
+AUC_final <- ddply(data_AUC,c("Level"),summarise,Mean_AUC = mean(AUC),SE = (sd(AUC)/sqrt(length(subs))))
+
+# plot the results
+AUC_final_revised <- AUC_final[which(AUC_final$Level!=4),]
+AUC_final_revised$Level <- c("L1","L3","Nature")
+AUC_final_revised$Level <- factor(AUC_final_revised$Level,levels = c("L1","L3","Nature"))
+
+# plot the difference of L1, L3 and Nature
+ggplot(data = AUC_final_revised,aes(x=Level,y=Mean_AUC)) + geom_bar(stat="identity",aes(fill=Level),position=position_dodge(),colour="black",width = 0.4,linewidth=1) + geom_errorbar(aes(ymin=Mean_AUC-SE,ymax=Mean_AUC+SE),width=0.1,linewidth=1,position=position_dodge()) + xlab("Clue Type") + ylab("Area Under Curve") + coord_cartesian(ylim=c(40000,55000)) + scale_y_continuous(breaks=seq(40000,55000,5000),expand=c(0,0)) + theme_classic() + scale_fill_manual(values = c(brewer.pal(9,"Blues")[3],brewer.pal(9,"Blues")[5],brewer.pal(9,"Blues")[1])) + theme(axis.title.y = element_text(size=20,colour = "black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.title.x = element_blank(),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave("AUC_All.pdf",width = 25, height = 15, units = "cm")
+
+# test the significance
+data_AUC$Sub <- as.factor(data_AUC$Sub)
+data_AUC$Level <- as.factor(data_AUC$Level)
+MANOVA(data = data_AUC[which(data_AUC$Level!=4),],
+       subID = "Sub",
+       dv = "AUC",
+       within = c("Level"),
+       sph.correction = "GG") %>%
+  EMMEANS("Level")
+```

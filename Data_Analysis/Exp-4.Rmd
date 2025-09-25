@@ -1,0 +1,249 @@
+---
+title: "Exp-4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(rstatix)
+library(bruceR)
+library(RColorBrewer)
+library(Metrics)
+```
+
+```{r read the data and pre-process, include=FALSE}
+subs <- dir(path = "./Exp-4")
+subs <- mixedsort(subs)
+trialnum <- 40
+datall <- data.frame()
+Path_X <- data.frame()
+Path_Time <- data.frame()
+Walking_Time <- data.frame()
+for (i in 1:length(subs))
+{
+  dat <- read.table(paste0("./Exp-4",subs[i]), header = FALSE, sep = ";", na.strings = "NA", dec = ".", strip.white = TRUE)
+  dat <- dat[,1:6]
+  dat <- cbind(rep(i,nrow(dat)),dat)
+  names(dat) <- c("Sub","Trial","Time","Position","X","Y","Z")
+  dat$X[which(dat$Trial%%2==0)] <- (dat$X[which(dat$Trial%%2==0)]-700)*(-1)
+  dat$Y[which(dat$Trial%%2==0)] <- dat$Y[which(dat$Trial%%2==0)]*(-1)
+  for (j in 1:trialnum) 
+  {
+    subdat <- subset(dat,Trial==j)
+    
+    # add the pre-processed data to the data frame
+    datall <- rbind(datall,subdat)
+    
+    # calculate the mean walking time
+    Walking_Time <- rbind(Walking_Time,subdat[nrow(subdat),])
+    
+    # do the linear interpolation of the path
+    subdat_revised <- subdat[,1:6]
+    subdat_revised <- rbind(list(subdat[1,1],subdat[1,2],0,subdat_revised[1,4],0,0),subdat_revised)
+    subdat_revised <- subdat_revised[!duplicated(subdat_revised$X),]
+    subdat_revised <- arrange(subdat_revised,X)
+    subdat_revised <- na.omit(subdat_revised)
+    
+    # get the Path_X
+    x_step <- seq(1,670,len = 670)
+    subdat_revised_x <- subdat_revised
+    y_revised <- interp1(subdat_revised_x$X,subdat_revised_x$Y,x_step,'linear')
+    subdat_revised_x_final <- data.frame("Sub"=rep(i,670),"Trial"=rep(j,670),"Position"=rep(subdat_revised_x$Position[1],670))
+    subdat_revised_x_final <- cbind(subdat_revised_x_final,x_step,y_revised)
+    names(subdat_revised_x_final) <- c("Sub","Trial","Position","X","Y")
+    
+    Path_X <- rbind(Path_X,subdat_revised_x_final)
+    print(paste("Sub",i,"Trial",j,sep = "-"))
+  }
+}
+
+Path_X_subjectfinal <- ddply(Path_X,c("Sub","Position","X"),summarise,Mean_Y = mean(Y))
+Path_X_final <- ddply(Path_X_subjectfinal,c("Position","X"),summarise,Y = mean(Mean_Y),SE = (sd(Mean_Y)/sqrt(length(subs))))
+
+# calculate the mean finish time (96% of the trials finish in 12s)
+Walking_Time1 <- Walking_Time[which(Walking_Time$Time<12),]
+c(min(Walking_Time1$Time),mean(Walking_Time1$Time),max(Walking_Time1$Time))
+# mean finish time is 8s, so mean speed is 83cm/s.
+
+```
+
+```{r draw the X-Y plot of one person in Exp-2a and Exp-2b, both experimental data and model prediction}
+Path_Exp_2a <- read.csv("Path_Exp-2a.csv")
+Path_Exp_2a <- Path_Exp_2a[,2:5]
+Path_Exp_2a <- cbind(Path_Exp_2a,rep("Exp-2a",nrow(Path_Exp_2a)))
+Path_Exp_2a <- cbind(Path_Exp_2a,rep("Real",nrow(Path_Exp_2a)))
+names(Path_Exp_2a) <- c("Position","X","Y","SE","Exp","Type")
+Path_Exp_2a_used <- Path_Exp_2a[which(Path_Exp_2a$Position!=0),]
+
+Path_Exp_2b <- Path_X_final
+Path_Exp_2b <- cbind(Path_Exp_2b,rep("Exp-2b",nrow(Path_Exp_2b)))
+Path_Exp_2b <- cbind(Path_Exp_2b,rep("Real",nrow(Path_Exp_2b)))
+names(Path_Exp_2b) <- c("Position","X","Y","SE","Exp","Type")
+
+Path_Exp_2a_pred <- read.csv("Exp-2a_Path_Fit.csv", header = FALSE)
+Path_Exp_2a_pred <- cbind(Path_Exp_2a_pred,rep(0,nrow(Path_Exp_2a_pred)))
+Path_Exp_2a_pred <- cbind(Path_Exp_2a_pred,rep("Exp-2a",nrow(Path_Exp_2a_pred)))
+Path_Exp_2a_pred <- cbind(Path_Exp_2a_pred,rep("Model",nrow(Path_Exp_2a_pred)))
+names(Path_Exp_2a_pred) <- c("Position","X","Y","SE","Exp","Type")
+Path_Exp_2a_pred$Y <- Path_Exp_2a_pred$Y - 350
+
+Path_Exp_2b_pred <- read.csv("Exp-2b_Path_Fit.csv", header = FALSE)
+Path_Exp_2b_pred <- cbind(Path_Exp_2b_pred,rep(0,nrow(Path_Exp_2b_pred)))
+Path_Exp_2b_pred <- cbind(Path_Exp_2b_pred,rep("Exp-2b",nrow(Path_Exp_2b_pred)))
+Path_Exp_2b_pred <- cbind(Path_Exp_2b_pred,rep("Model",nrow(Path_Exp_2b_pred)))
+names(Path_Exp_2b_pred) <- c("Position","X","Y","SE","Exp","Type")
+Path_Exp_2b_pred$Y <- Path_Exp_2b_pred$Y - 350
+
+Path_All <- rbind(Path_Exp_2a_used,Path_Exp_2b,Path_Exp_2a_pred,Path_Exp_2b_pred)
+Path_All$Position <- as.factor(Path_All$Position)
+Path_All$Exp <- as.factor(Path_All$Exp)
+Path_All$Type <- factor(Path_All$Type, levels = c("Real","Model"))
+
+ggplot(data=Path_All, aes(x=X, y=Y*(-1),group = interaction(Position,Exp,Type))) + geom_line(aes(linetype =Type,color=Position),size=2) + geom_ribbon(aes(ymin=Y*(-1)-SE*1.96,ymax=Y*(-1)+SE*1.96),alpha=0.3) + ylab("Y (cm)") + xlab("X (cm)") + facet_wrap(c("Position","Exp"),ncol = 2) +  scale_x_continuous(breaks=seq(0, 700, 100),expand=c(0,0)) + scale_y_continuous(breaks=seq(-200, 200, 100),expand=c(0,0)) + coord_fixed(xlim=c(0, 700),ylim=c(-200, 200)) + theme_classic() + scale_color_npg() + scale_fill_npg() + scale_linetype_manual(values = c("solid","dashed")) + theme(axis.title = element_text(size=20, colour="black"),
+  axis.text  = element_text(size=14, colour="black"),
+  axis.line = element_line(size=1),
+  strip.text = element_text(size=14, colour="black"),
+  legend.text = element_text(size=20, colour="black", margin = margin(r = 20, unit = "pt")),
+  legend.title = element_blank(),
+  legend.position = "top",
+  axis.ticks = element_line(size=0.3),
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length = unit(-0.1, "cm"),
+  legend.key.width = unit(1.5, "cm"),
+  panel.grid.major = element_line(colour = NA),
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.minor = element_blank())
+ggsave("Path.pdf",width = 60, height = 60, units = "cm")
+
+rmse1 <- rmse(Path_All$Y[which(Path_All$Type=="Real" & Path_All$Exp=="Exp-2a")],Path_All$Y[which(Path_All$Type=="Model" & Path_All$Exp=="Exp-2a")])
+rmse1
+
+rmse2 <- rmse(Path_All$Y[which(Path_All$Type=="Real" & Path_All$Exp=="Exp-2b")],Path_All$Y[which(Path_All$Type=="Model" & Path_All$Exp=="Exp-2b")])
+rmse2
+```
+
+```{r calculate the MLD difference}
+MLD_Exp_2a <- read.csv("MLD_Exp_2a.csv")
+MLD_Exp_2a <- MLD_Exp_2a[,2:4]
+MLD_Exp_2a <- cbind(MLD_Exp_2a,rep("Exp 2a",nrow(MLD_Exp_2a)))
+names(MLD_Exp_2a) <- c("Position","Y","SE","Exp")
+
+MLD_Exp_2b <- data.frame()
+for (i in 1:length(subs)) 
+{
+  for (j in seq(-200,-50,50)) 
+  {
+    subdat_path <- subset(Path_X_subjectfinal,Sub==i & Position==j)
+    MLD_Exp_2b <- rbind(MLD_Exp_2b,subdat_path[which(subdat_path$Mean_Y==max(subdat_path$Mean_Y))[1],])
+    print(paste("Sub",i,"Positon",j,sep = "-"))
+  }
+}
+MLD_Exp_2b_final <- ddply(MLD_Exp_2b,c("Position"),summarise,Y = mean(Mean_Y),SE = (sd(Mean_Y)/sqrt(length(subs))))
+MLD_Exp_2b_final <- cbind(MLD_Exp_2b_final,rep("Exp 2b",nrow(MLD_Exp_2b_final)))
+names(MLD_Exp_2b_final) <- c("Position","Y","SE","Exp")
+
+MLD_All <- rbind(MLD_Exp_2a,MLD_Exp_2b_final)
+MLD_All$Position <- as.factor(MLD_All$Position)
+
+# line plot
+ggplot(data = MLD_All,aes(x=Position,y=Y,group = Exp)) + geom_point(aes(color=Exp),size=3) + geom_line(aes(color=Exp),size=1) + geom_errorbar(aes(ymin=Y-SE,ymax=Y+SE,color=Exp), width=6,size=1) + xlab("The One-way Mirror's position (cm)") + ylab("Maximum Lateral Distance (cm)") + coord_cartesian(ylim=c(0,200)) + scale_color_manual(values = brewer.pal(8,"Set2")[1:2]) + scale_x_continuous(breaks=seq(-200,-50,50),expand=c(0,10)) + scale_y_continuous(breaks=seq(0,200,20),expand=c(0,0)) + theme_classic()  + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave("MLD_Line.pdf",width = 15, height = 10, units = "cm")
+```
+
+```{r statistic test}
+Exp1_subdat <- read.csv("Sub_MLD_Exp_2a.csv")
+Exp1_subdat <- Exp1_subdat[,-1]
+Exp1_subdat <- cbind(Exp1_subdat,rep("Exp1",nrow(Exp1_subdat)))
+names(Exp1_subdat) <- c("Sub","Position","X","Y","Exp")
+
+Exp2_subdat <- MLD_Exp_2b
+Exp2_subdat <- cbind(Exp2_subdat,rep("Exp2",nrow(Exp2_subdat)))
+Exp2_subdat$Sub <- rep(26:50,each = 4)
+names(Exp2_subdat) <- c("Sub","Position","X","Y","Exp")
+
+subject_sta_test <- rbind(Exp1_subdat,Exp2_subdat)
+subject_sta_test$Sub <- as.factor(subject_sta_test$Sub)
+subject_sta_test$Position <- as.factor(subject_sta_test$Position)
+subject_sta_test$Exp <- as.factor(subject_sta_test$Exp)
+
+MANOVA(data = subject_sta_test,
+       subID = "Sub",
+       dv = "Y",
+       between = "Exp",
+       within = "Position",
+       sph.correction = "GG") %>%
+  EMMEANS("Position",by = "Exp")
+```
+
+```{r plot the MLD from real data and model fitting in Exp-2a and Exp-2b}
+RealMLD <- MLD_All
+RealMLD <- cbind(RealMLD,rep("Real",nrow(RealMLD)))
+names(RealMLD) <- c("Position","MLD","SE","Exp","Type")
+
+ModelMLD2a <- read.csv("Exp-2a_MLD_Fit.csv",header = FALSE)
+ModelMLD2a <- cbind(ModelMLD2a,rep(0,nrow(ModelMLD2a)),rep("Exp 2a",nrow(ModelMLD2a)),rep("Model",nrow(ModelMLD2a)))
+names(ModelMLD2a) <- c("Position","MLD","SE","Exp","Type")
+
+ModelMLD2b <- read.csv("Exp-2b_MLD_Fit.csv",header = FALSE)
+ModelMLD2b <- cbind(ModelMLD2b,rep(0,nrow(ModelMLD2b)),rep("Exp 2b",nrow(ModelMLD2b)),rep("Model",nrow(ModelMLD2b)))
+names(ModelMLD2b) <- c("Position","MLD","SE","Exp","Type")
+
+ModelMLD <- rbind(ModelMLD2a,ModelMLD2b)
+
+MLDAll <- rbind(RealMLD,ModelMLD)
+MLDAll$Exp <- as.factor(MLDAll$Exp)
+MLDAll$Type <- factor(MLDAll$Type,levels = c("Real","Model"))
+
+ggplot(data = MLDAll,aes(x=Position,y=MLD,group=interaction(Exp,Type))) + geom_point(aes(shape=Type,color=Exp),size=3) + geom_line(aes(color=Exp,linetype=Type),size=1) + geom_ribbon(data = MLDAll[which(MLDAll$Type=="Real"),],aes(ymin=MLD-1.96*SE,ymax=MLD+1.96*SE,fill=Exp), alpha = 0.15) + ylab("Maximum Lateral Distance (cm)") + xlab("The One-way Mirror's position (cm)") + coord_cartesian(ylim=c(0,200)) + scale_x_continuous(breaks=seq(-200,-50,50),expand=c(0,10)) + scale_y_continuous(breaks=seq(0,200,20),expand=c(0,0)) + theme_classic() + scale_fill_manual(values = brewer.pal(8,"Set2")[1:2]) + scale_color_manual(values = brewer.pal(8,"Set2")[1:2]) + scale_shape_manual(values = c(16,17)) + scale_linetype_manual(values = c("solid","dashed")) + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ ggsave("Comparison_MLD_Line.pdf",width = 15, height = 10,units = "cm")
+ 
+ 
+# calculate the rmse
+rmse1 <- sqrt(mean((MLDAll[which(MLDAll$Exp=="Exp 2a" & MLDAll$Type=="Model"),2] - MLDAll[which(MLDAll$Exp=="Exp 2a" & MLDAll$Type=="Real"),2])^2))
+
+rmse2 <- sqrt(mean((MLDAll[which(MLDAll$Exp=="Exp 2b" & MLDAll$Type=="Model"),2] - MLDAll[which(MLDAll$Exp=="Exp 2b" & MLDAll$Type=="Real"),2])^2))
+```
+
+```{r plot the MLD from model fitting in Exp-2a and Exp-2b}
+ggplot(data = ModelMLD,aes(x=Position,y=MLD,group = Exp)) + geom_point(aes(color=Exp),size=3) + geom_line(aes(color=Exp),size=1) + xlab("The One-way Mirror's position (cm)") + ylab("Maximum Lateral Distance (cm)") + coord_cartesian(ylim=c(0,200)) + scale_color_manual(values = brewer.pal(8,"Set2")[1:2]) + scale_x_continuous(breaks=seq(-200,-50,50),expand=c(0,10)) + scale_y_continuous(breaks=seq(0,200,20),expand=c(0,0)) + theme_classic()  + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave("Model_MLD_Line.pdf",width = 15, height = 10, units = "cm")
+```

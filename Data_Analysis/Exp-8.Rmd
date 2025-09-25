@@ -1,0 +1,206 @@
+---
+title: "Exp-8"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(RColorBrewer)
+library(bruceR)
+library(readxl)
+```
+
+```{r process the subjective report data and plot the results}
+report <- read_excel("Subjective_Rating.xlsx")
+Observation_Num <- 162
+report <- report[1:Observation_Num,c(1,4:11)]
+
+# change the sub number of each group and calculate the mean rating
+Rating_Subject <- data.frame()
+Rating_Final <- data.frame()
+for (i in c("SLM","SLM_TOM","COM","COM_TOM","NBO","NBO_TOM")) 
+{
+  subdat_final <- data.frame()
+  subdat <- subset(report,Algorithm == i)
+  SubNum <- nrow(subdat)
+  names(subdat) <- c("Sub","Algorithm","Collision","Q1","Q2","Q3","Q4","Q5","Q6")
+  
+  # adjust data layout
+  subdat_revised <- data.frame()
+  for (j in 1:nrow(subdat)) 
+  {
+    for (k in 1:7) 
+    {
+      Q_list <- c("Collision","Q1","Q2","Q3","Q4","Q5","Q6")
+      if (k>1){
+        subdat_revised <- rbind(subdat_revised,list(subdat[j,1],subdat[j,2],Q_list[k],subdat[j,k+2]/7)) # normalize the rating of Q1~Q6
+      }else{
+        subdat_revised <- rbind(subdat_revised,list(subdat[j,1],subdat[j,2],Q_list[k],subdat[j,k+2]))
+      }
+    }
+  }
+  subdat_revised <- cbind(subdat_revised,rep("No_ToM",nrow(subdat_revised)))
+  names(subdat_revised) <- c("Sub","Algorithm","Question","Rating","Type")
+  
+  if (i=="SLM_TOM"){
+    subdat_revised$Algorithm <- "SLM"
+    subdat_revised$Type <- "With_ToM"
+  }else if (i=="COM_TOM"){
+    subdat_revised$Algorithm <- "COM"
+    subdat_revised$Type <- "With_ToM"
+  }else if (i=="NBO_TOM"){
+    subdat_revised$Algorithm <- "NBO"
+    subdat_revised$Type <- "With_ToM"
+  }
+  
+  Rating_Subject <- rbind(Rating_Subject,subdat_revised)
+  
+  subdat_revised$Sub <- as.character(subdat_revised$Sub)
+  subdat_revised$Algorithm <- as.character(subdat_revised$Algorithm)
+  subdat_revised$Rating <- as.numeric(subdat_revised$Rating)
+  subdat_final <- ddply(subdat_revised,c("Algorithm","Question","Type"),summarise,Mean_Rating = mean(Rating),SE = (sd(Rating)/sqrt(SubNum)))
+  names(subdat_final) <- c("Algorithm","Question","Type","Rating","SE")
+  
+  Rating_Final <- rbind(Rating_Final,subdat_final)
+}
+
+# plot the results
+
+# RColorBrewer::display.brewer.all()   # choose the color (Pastel2)
+# scale_fill_manual(values = brewer.pal(8,"Pastel2")[1:3])   # use the color selected
+
+# change the questions' name
+Question_Name <- rep(c("Collision","Humanization","Comfort","Convenience","Reasoning","Flexibility","Intelligence"),times = 6)
+Rating_Final$Question <- Question_Name
+
+Rating_Final$Algorithm <- factor(Rating_Final$Algorithm,levels = c("SLM","COM","NBO"))
+Rating_Final$Question <- factor(Rating_Final$Question,levels = c("Humanization","Comfort","Convenience","Reasoning","Flexibility","Intelligence","Collision"))
+Rating_Final$Type <- as.factor(Rating_Final$Type)
+
+# plot Q1~Q6
+ggplot(data = Rating_Final[which(Rating_Final$Question!="Collision"),],aes(x=Algorithm,y=Rating,group = interaction(Question,Type))) + geom_bar(stat = "identity",aes(fill=Type,group = Type),colour="black",width = 0.4,size=1,position=position_dodge(0.6)) + geom_errorbar(aes(ymin=Rating-SE,ymax=Rating+SE),width=0.15,size=1,position=position_dodge(0.6)) + xlab("Algorithm") + ylab("Rating") + facet_wrap(c("Question"),ncol = 6) + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic()  + scale_fill_manual(values = brewer.pal(9,"Blues")[c(1,4)]) + theme(axis.title.y = element_text(size=20,colour = "black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.title.x = element_blank(),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave(("./results/Question-All.pdf"), width = 40, height = 10, units = "cm")
+```
+
+```{r statistic analysis}
+Rating_Subject$Sub <- as.character(Rating_Subject$Sub)
+Rating_Subject$Algorithm <- as.character(Rating_Subject$Algorithm)
+Rating_Subject$Rating <- as.numeric(Rating_Subject$Rating)
+Rating_Subject$Sub <- as.factor(Rating_Subject$Sub)
+Rating_Subject$Algorithm <- as.factor(Rating_Subject$Algorithm)
+Rating_Subject$Type <- as.factor(Rating_Subject$Type)
+
+MANOVA(data = Rating_Subject[which(Rating_Subject$Question=="Q6"),],
+       subID = "Sub",
+       dv = "Rating",
+       between = c("Algorithm","Type"),
+       sph.correction = "GG") %>%
+   EMMEANS("Type",by = "Algorithm",p.adjust = "bonferroni")
+
+
+TTEST(Rating_Subject[which(Rating_Subject$Question=="Q6" & Rating_Subject$Algorithm=="NBO"),],"Rating","Type",digits = 3)
+```
+
+```{r process the collision evaluation data and plot the results}
+sub <- dir(path = "./Experiment_Videos/Evaluation_Results")
+subs <- mixedsort(sub)
+
+# change the video number of each group and calculate the mean collision possibility
+Collision_all <- data.frame()
+for (i in 1:length(subs)) 
+{
+  dat <- read.table(paste0("./Experiment_Videos/Evaluation_Results/",subs[i]), header = TRUE, sep = ",", na.strings = "NA", dec = ".", strip.white = TRUE)
+  dat <- cbind(rep(i,nrow(dat)),dat)
+  names(dat) <- c("Sub","Video","Algorithm","Collision")
+  
+  for (j in c("SLM","SLM_TOM","COM","COM_TOM","NBO","NBO_TOM")) 
+  {
+    subdat <- subset(dat,Algorithm == j)
+    subdat <- cbind(subdat,rep("No_ToM",nrow(subdat)))
+    names(subdat) <- c("Sub","Video","Algorithm","Collision","Type")
+    
+    if (j=="SLM_TOM"){
+      subdat$Algorithm <- "SLM"
+      subdat$Type <- "With_ToM"
+    }else if (j=="COM_TOM"){
+      subdat$Algorithm <- "COM"
+      subdat$Type <- "With_ToM"
+    }else if (j=="NBO_TOM"){
+      subdat$Algorithm <- "NBO"
+      subdat$Type <- "With_ToM"
+    }
+    
+    Collision_all <- rbind(Collision_all,subdat)
+    print(paste("Sub",i,"Algorithm",j,sep = "-"))
+  }
+}
+
+Collision_Video <- ddply(Collision_all,c("Video","Algorithm","Type"),summarise,Mean_Col = mean(Collision))
+Collision_Final <- ddply(Collision_Video,c("Algorithm","Type"),summarise,Collision = mean(Mean_Col),SE=(sd(Mean_Col)/sqrt(length(subs))))
+
+# plot the results
+
+# RColorBrewer::display.brewer.all()   # choose the color (Pastel2)
+# scale_fill_manual(values = brewer.pal(8,"Pastel2")[1:3])   # use the color selected
+
+Collision_Final$Algorithm <- factor(Collision_Final$Algorithm,levels = c("SLM","COM","NBO"))
+Collision_Final$Type <- as.factor(Collision_Final$Type)
+
+# plot collision possibility
+ggplot(data = Collision_Final,aes(x=Algorithm,y=Collision,group = Type)) + geom_bar(stat = "identity",aes(fill=Type,group = Type),colour="black",width = 0.4,size=1,position=position_dodge(0.6)) + geom_errorbar(aes(ymin=Collision-SE,ymax=Collision+SE),width=0.15,size=1,position=position_dodge(0.6)) + xlab("Algorithm") + ylab("Collision Possibility") + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic()  + scale_fill_manual(values = brewer.pal(9,"Blues")[c(1,4)]) + theme(axis.title.y = element_text(size=20,colour = "black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.title.x = element_blank(),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave(("./results/Collision.pdf"), width = 25, height = 15, units = "cm")
+```
+
+```{r statistic analysis of collision possibility}
+Collision_Video$Video <- as.character(Collision_Video$Video)
+Collision_Video$Algorithm <- as.character(Collision_Video$Algorithm)
+Collision_Video$Type <- as.factor(Collision_Video$Type)
+
+MANOVA(data = Collision_Video,
+       subID = "Video",
+       dv = "Mean_Col",
+       between = c("Algorithm","Type"),
+       sph.correction = "GG") %>%
+   EMMEANS("Type",by = "Algorithm",p.adjust = "bonferroni")
+
+
+consistent_analysis <- data.frame()
+for (i in 1:162)
+{
+  subdat2 <- subset(Collision_all,Video==i)
+  subdat2 <- subdat2[,c(1,4)]
+  consistent_analysis <- rbind(consistent_analysis,subdat2$Collision)
+}
+
+cronbachs_alpha(consistent_analysis)
+```

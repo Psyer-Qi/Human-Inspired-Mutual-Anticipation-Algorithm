@@ -1,0 +1,314 @@
+---
+title: "Simulation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(RColorBrewer)
+library(bruceR)
+library(readxl)
+```
+
+```{r use the raw data and explore absolute difference between different types}
+
+# SLM Results
+SLM_results <- dir(path = "./Result/SLM")
+SLM_results <- mixedsort(SLM_results)
+SLM_datall <- data.frame()
+for (i in 1:length(SLM_results))
+{
+  dat <- read.csv(paste0("./Result/SLM/",SLM_results[i]),header = TRUE,sep = ",")
+  dat <- dat[,c(1,2,3,4,6,8,9,10)]
+  names(dat) <- c("Algorithm","Level","Batch","Scene","Collision","Path_Length","Cal_Time","Reach")
+  
+  # change the value of "Algorithm" in the dataframe
+  dat$Algorithm <- "SLM"
+  
+  # change the value of "collision" in the dataframe
+  dat$Collision[which(dat$Collision=="True")] <- 1
+  dat$Collision[which(dat$Collision=="False")] <- 0
+  dat$Collision <- as.numeric(dat$Collision)
+  
+  # add the type of algorithms ("With_ToM" or "Without_ToM")
+  dat <- cbind(dat,rep("With_ToM",nrow(dat)))
+  names(dat) <- c("Algorithm","Level","Batch","Scene","Collision","Path_Length","Cal_Time","Reach","Type")
+  dat$Type[which(dat$Level==0)] <- "Without_ToM"
+ 
+  # select the trial that agents successfully reached the destination
+  dat <- dat[which(dat$Reach=="True"),]
+  dat <- dat[,c(1,3,4,5,6,7,9)]
+  
+  # calculate the navigation time (free walk speed: 1.4, free walk acceleration: 0.6)
+  speed <- 1.4
+  acceleration <- 0.6
+  change_speed_time <- 1.4/0.6
+  change_speed_length <- 1/2 * acceleration * (change_speed_time^2)
+  
+  for (j in 1:nrow(dat)) 
+  {
+    subdat <- dat[j,]
+    
+    if (subdat$Collision[1]==0){
+      steady_speed_length <- 0.01 * subdat$Path_Length[1] - 2 * change_speed_length
+      steady_speed_time <- steady_speed_length/speed
+      time_all <- steady_speed_time + 2 * change_speed_time
+    }else{
+      steady_speed_length <- 0.01 * subdat$Path_Length[1] - 4 * change_speed_length
+      steady_speed_time <- steady_speed_length/speed
+      time_all <- steady_speed_time + 4 * change_speed_time
+    }
+    
+    subdat$Nav_Time <- time_all
+    SLM_datall <- rbind(SLM_datall,subdat)
+  }
+  print(i)
+}
+
+## compute the mean performance of each scene
+SLM_scene_final <- ddply(SLM_datall,c("Algorithm","Scene","Type"),summarise,Mean_Collision = mean(Collision),Mean_Nav = mean(Nav_Time))
+
+## select the scenes that both "with ToM" and "without ToM" conditions reached the destination
+scene_SLM_with_tom <- SLM_scene_final$Scene[which(SLM_scene_final$Type=="With_ToM")]
+scene_SLM_without_tom <- SLM_scene_final$Scene[which(SLM_scene_final$Type=="Without_ToM")]
+scene_SLM <- intersect(scene_SLM_with_tom,scene_SLM_without_tom)
+
+
+
+# COM Results
+COM_results <- dir(path = "./Result/COM")
+COM_results <- mixedsort(COM_results)
+COM_datall <- data.frame()
+for (i in 1:length(COM_results))
+{
+  dat <- read.csv(paste0("./Result/COM/",COM_results[i]),header = TRUE,sep = ",")
+  dat <- dat[,c(1,2,3,4,6,8,9,10)]
+  names(dat) <- c("Algorithm","Level","Batch","Scene","Collision","Path_Length","Cal_Time","Reach")
+  
+  # change the value of "Algorithm" in the dataframe
+  dat$Algorithm <- "COM"
+  
+  # change the value of "collision" in the dataframe
+  dat$Collision[which(dat$Collision=="True")] <- 1
+  dat$Collision[which(dat$Collision=="False")] <- 0
+  dat$Collision <- as.numeric(dat$Collision)
+  
+  # add the type of algorithms ("With_ToM" or "Without_ToM")
+  dat <- cbind(dat,rep("With_ToM",nrow(dat)))
+  names(dat) <- c("Algorithm","Level","Batch","Scene","Collision","Path_Length","Cal_Time","Reach","Type")
+  dat$Type[which(dat$Level==0)] <- "Without_ToM"
+ 
+  # select the trial that agents successfully reached the destination
+  dat <- dat[which(dat$Reach=="True"),]
+  dat <- dat[,c(1,3,4,5,6,7,9)]
+  
+  # calculate the navigation time (free walk speed: 1.4, free walk acceleration: 0.6)
+  speed <- 1.4
+  acceleration <- 0.6
+  change_speed_time <- 1.4/0.6
+  change_speed_length <- 1/2 * acceleration * (change_speed_time^2)
+  
+  for (j in 1:nrow(dat)) 
+  {
+    subdat <- dat[j,]
+    
+    if (subdat$Collision[1]==0){
+      steady_speed_length <- 0.01 * subdat$Path_Length[1] - 2 * change_speed_length
+      steady_speed_time <- steady_speed_length/speed
+      time_all <- steady_speed_time + 2 * change_speed_time
+    }else{
+      steady_speed_length <- 0.01 * subdat$Path_Length[1] - 4 * change_speed_length
+      steady_speed_time <- steady_speed_length/speed
+      time_all <- steady_speed_time + 4 * change_speed_time
+    }
+    
+    subdat$Nav_Time <- time_all
+    COM_datall <- rbind(COM_datall,subdat)
+  }
+  print(i)
+}
+
+## compute the mean performance of each scene
+COM_scene_final <- ddply(COM_datall,c("Algorithm","Scene","Type"),summarise,Mean_Collision = mean(Collision),Mean_Nav = mean(Nav_Time))
+
+## select the scenes that both "with ToM" and "without ToM" conditions reached the destination
+scene_COM_with_tom <- COM_scene_final$Scene[which(COM_scene_final$Type=="With_ToM")]
+scene_COM_without_tom <- COM_scene_final$Scene[which(COM_scene_final$Type=="Without_ToM")]
+scene_COM <- intersect(scene_COM_with_tom,scene_COM_without_tom)
+
+
+
+# NBO Results
+NBO_results <- dir(path = "./Result/NBody")
+NBO_results <- mixedsort(NBO_results)
+NBO_datall <- data.frame()
+for (i in 1:length(NBO_results))
+{
+  dat <- read.csv(paste0("./Result/NBody/",NBO_results[i]),header = TRUE,sep = ",")
+  dat <- dat[,c(1,2,3,4,6,8,9,10)]
+  names(dat) <- c("Algorithm","Level","Batch","Scene","Collision","Path_Length","Cal_Time","Reach")
+  
+  # change the value of "Algorithm" in the dataframe
+  dat$Algorithm <- "NBO"
+  
+  # change the value of "collision" in the dataframe
+  dat$Collision[which(dat$Collision=="True")] <- 1
+  dat$Collision[which(dat$Collision=="False")] <- 0
+  dat$Collision <- as.numeric(dat$Collision)
+  
+  # add the type of algorithms ("With_ToM" or "Without_ToM")
+  dat <- cbind(dat,rep("With_ToM",nrow(dat)))
+  names(dat) <- c("Algorithm","Level","Batch","Scene","Collision","Path_Length","Cal_Time","Reach","Type")
+  dat$Type[which(dat$Level==0)] <- "Without_ToM"
+ 
+  # select the trial that agents successfully reached the destination
+  dat <- dat[which(dat$Reach=="True"),]
+  dat <- dat[,c(1,3,4,5,6,7,9)]
+  
+  # calculate the navigation time (free walk speed: 1.4, free walk acceleration: 0.6)
+  speed <- 1.4
+  acceleration <- 0.6
+  change_speed_time <- 1.4/0.6
+  change_speed_length <- 1/2 * acceleration * (change_speed_time^2)
+  
+  for (j in 1:nrow(dat)) 
+  {
+    subdat <- dat[j,]
+    
+    if (subdat$Collision[1]==0){
+      steady_speed_length <- 0.01 * subdat$Path_Length[1] - 2 * change_speed_length
+      steady_speed_time <- steady_speed_length/speed
+      time_all <- steady_speed_time + 2 * change_speed_time
+    }else{
+      steady_speed_length <- 0.01 * subdat$Path_Length[1] - 4 * change_speed_length
+      steady_speed_time <- steady_speed_length/speed
+      time_all <- steady_speed_time + 4 * change_speed_time
+    }
+    
+    subdat$Nav_Time <- time_all
+    NBO_datall <- rbind(NBO_datall,subdat)
+  }
+  print(i)
+}
+
+## compute the mean performance of each scene
+NBO_scene_final <- ddply(NBO_datall,c("Algorithm","Scene","Type"),summarise,Mean_Collision = mean(Collision),Mean_Nav = mean(Nav_Time))
+
+## select the scenes that both "with ToM" and "without ToM" conditions reached the destination
+scene_NBO_with_tom <- NBO_scene_final$Scene[which(NBO_scene_final$Type=="With_ToM")]
+scene_NBO_without_tom <- NBO_scene_final$Scene[which(NBO_scene_final$Type=="Without_ToM")]
+scene_NBO <- intersect(scene_NBO_with_tom,scene_NBO_without_tom)
+
+
+
+# select the scenes that agent reached the destination in all algorithms
+scene_final <- intersect(intersect(scene_SLM,scene_COM),scene_NBO)
+
+scene_SLM1 <- data.frame()
+for (i in scene_final) 
+{
+  sub_scene <- subset(SLM_scene_final,Scene==i)
+  scene_SLM1 <- rbind(scene_SLM1,sub_scene)
+}
+
+## compute the mean performance of different types
+num_SLM <- length(scene_final)
+SLM_final <- ddply(scene_SLM1,c("Algorithm","Type"),summarise,Collision = mean(Mean_Collision),SE_Collision = (sd(Mean_Collision)/sqrt(num_SLM)),Nav_Time = mean(Mean_Nav),SE_Time = (sd(Mean_Nav)/sqrt(num_SLM)))
+
+
+
+scene_COM1 <- data.frame()
+for (i in scene_final) 
+{
+  sub_scene <- subset(COM_scene_final,Scene==i)
+  scene_COM1 <- rbind(scene_COM1,sub_scene)
+}
+
+## compute the mean performance of different types
+num_COM <- length(scene_final)
+COM_final <- ddply(scene_COM1,c("Algorithm","Type"),summarise,Collision = mean(Mean_Collision),SE_Collision = (sd(Mean_Collision)/sqrt(num_COM)),Nav_Time = mean(Mean_Nav),SE_Time = (sd(Mean_Nav)/sqrt(num_COM)))
+
+
+
+scene_NBO1 <- data.frame()
+for (i in scene_final) 
+{
+  sub_scene <- subset(NBO_scene_final,Scene==i)
+  scene_NBO1 <- rbind(scene_NBO1,sub_scene)
+}
+
+## compute the mean performance of different types
+num_NBO <- length(scene_final)
+NBO_final <- ddply(scene_NBO1,c("Algorithm","Type"),summarise,Collision = mean(Mean_Collision),SE_Collision = (sd(Mean_Collision)/sqrt(num_NBO)),Nav_Time = mean(Mean_Nav),SE_Time = (sd(Mean_Nav)/sqrt(num_NBO)))
+
+
+
+# combine all results
+final_scene_data <- rbind(scene_SLM1,scene_COM1,scene_NBO1)
+final_data <- rbind(SLM_final,COM_final,NBO_final)
+```
+
+```{r plot the results}
+
+# RColorBrewer::display.brewer.all()   # choose the color (Pastel2)
+# scale_fill_manual(values = brewer.pal(8,"Pastel2")[1:3])   # use the color selected
+
+final_data$Algorithm <- factor(final_data$Algorithm,levels = c("SLM","COM","NBO"))
+final_data$Type <- factor(final_data$Type, levels = c("Without_ToM","With_ToM"))
+
+# plot collision possibility
+ggplot(data = final_data[,c(1,2,3,4)],aes(x=Algorithm,y=Collision,group = Type)) + geom_bar(stat = "identity",aes(fill=Type,group = Type),colour="black",width = 0.4,size=1,position=position_dodge(0.6)) + geom_errorbar(aes(ymin=Collision-SE_Collision,ymax=Collision+SE_Collision),width=0.15,size=1,position=position_dodge(0.6)) + xlab("Algorithm") + ylab("Collision Possibility") + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic()  + scale_fill_manual(values = brewer.pal(9,"Blues")[c(1,4)]) + theme(axis.title.y = element_text(size=20,colour = "black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.title.x = element_blank(),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave(("./Result/Raw_Collision_Possibility.pdf"), width = 25, height = 15, units = "cm")
+
+
+
+# plot Navigation Time
+ggplot(data = final_data[,c(1,2,5,6)],aes(x=Algorithm,y=Nav_Time,group = Type)) + geom_bar(stat = "identity",aes(fill=Type,group = Type),colour="black",width = 0.4,size=1,position=position_dodge(0.6)) + geom_errorbar(aes(ymin=Nav_Time-SE_Time,ymax=Nav_Time+SE_Time),width=0.15,size=1,position=position_dodge(0.6)) + xlab("Algorithm") + ylab("Navigation Time (s)") + coord_cartesian(ylim=c(8,12)) + scale_y_continuous(breaks=seq(8,12,1),expand=c(0,0)) + theme_classic()  + scale_fill_manual(values = brewer.pal(9,"Blues")[c(1,4)]) + theme(axis.title.y = element_text(size=20,colour = "black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.title.x = element_blank(),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave(("./Result/Raw_Navigation_Time.pdf"), width = 25, height = 15, units = "cm")
+```
+
+```{r statistic analysis}
+Statistic_data <- final_scene_data
+Statistic_data$Algorithm <- as.factor(Statistic_data$Algorithm)
+Statistic_data$Type <- as.factor(Statistic_data$Type)
+
+MANOVA(data = Statistic_data[,c(1:3,4)],
+       subID = "Scene",
+       dv = "Mean_Collision",
+       within = c("Algorithm","Type"),
+       sph.correction = "GG") %>%
+   EMMEANS("Type",by = "Algorithm",p.adjust = "bonferroni")
+
+
+TTEST(Rating_Subject[which(Rating_Subject$Question=="Q6" & Rating_Subject$Algorithm=="NBO"),],"Rating","Type",digits = 3)
+```

@@ -1,0 +1,151 @@
+---
+title: "Exp-3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(rstatix)
+```
+
+```{r read the data and pre-process, include=FALSE}
+subs <- dir(path = "./Exp-3")
+subs <- mixedsort(subs)
+trialnum <- 50
+datall <- data.frame()
+Path_X <- data.frame()
+Path_Time <- data.frame()
+Walking_Time <- data.frame()
+for (i in 1:length(subs))
+{
+  dat <- read.table(paste0("./Exp-3",subs[i]), header = FALSE, sep = ";", na.strings = "NA", dec = ".", strip.white = TRUE)
+  dat <- dat[,1:6]
+  dat <- cbind(rep(i,nrow(dat)),dat)
+  names(dat) <- c("Sub","Trial","Time","Position","X","Y","Z")
+  dat$X[which(dat$Trial%%2==0)] <- (dat$X[which(dat$Trial%%2==0)]-700)*(-1)
+  dat$Y[which(dat$Trial%%2==0)] <- dat$Y[which(dat$Trial%%2==0)]*(-1)
+  for (j in 1:trialnum) 
+  {
+    subdat <- subset(dat,Trial==j)
+    
+    # add the pre-processed data to the data frame
+    datall <- rbind(datall,subdat)
+    
+    # calculate the mean walking time
+    Walking_Time <- rbind(Walking_Time,subdat[nrow(subdat),])
+    
+    # do the linear interpolation of the path
+    subdat_revised <- subdat[,1:6]
+    subdat_revised <- rbind(list(subdat[1,1],subdat[1,2],0,subdat_revised[1,4],0,0),subdat_revised)
+    subdat_revised <- subdat_revised[!duplicated(subdat_revised$X),]
+    subdat_revised <- arrange(subdat_revised,X)
+    subdat_revised <- na.omit(subdat_revised)
+    
+    # get the Path_X
+    x_step <- seq(1,670,len = 670)
+    subdat_revised_x <- subdat_revised
+    y_revised <- interp1(subdat_revised_x$X,subdat_revised_x$Y,x_step,'linear')
+    subdat_revised_x_final <- data.frame("Sub"=rep(i,670),"Trial"=rep(j,670),"Position"=rep(subdat_revised_x$Position[1],670))
+    subdat_revised_x_final <- cbind(subdat_revised_x_final,x_step,y_revised)
+    names(subdat_revised_x_final) <- c("Sub","Trial","Position","X","Y")
+    
+    Path_X <- rbind(Path_X,subdat_revised_x_final)
+    print(paste("Sub",i,"Trial",j,sep = "-"))
+  }
+}
+
+Path_X_subjectfinal <- ddply(Path_X,c("Sub","Position","X"),summarise,Mean_Y = mean(Y))
+Path_X_final <- ddply(Path_X_subjectfinal,c("Position","X"),summarise,Y = mean(Mean_Y),SE = (sd(Mean_Y)/sqrt(length(subs))))
+
+# calculate the mean finish time (96% of the trials finish in 12s)
+Walking_Time1 <- Walking_Time[which(Walking_Time$Time<12),]
+c(min(Walking_Time1$Time),mean(Walking_Time1$Time),max(Walking_Time1$Time))
+# mean finish time is 8s, so mean speed is 83cm/s.
+
+```
+
+```{r calculate the avatar path using in Exp-2b}
+Path_Avatar <- Path_X_final
+for (i in seq(-200,0,50)) 
+{
+  subdat_avatar_path <- subset(Path_Avatar,Position==i)
+  subdat_avatar_path <- rbind(list(subdat_avatar_path[1,1],0,0,0),subdat_avatar_path)
+  subdat_avatar_path <- cbind(subdat_avatar_path,seq(0,8,len = 671))
+  names(subdat_avatar_path) <- c("Position","X","Y","SE","Time")
+      
+  # do the linear interpolation of the path
+  time_step <- seq(0,8,0.014)
+  x_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$X,time_step,'linear')
+  y_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$Y,time_step,'linear')
+  subdat_avatar_path_final <- data.frame("Position"=rep(subdat_avatar_path$Position[1],length(time_step)))
+  subdat_avatar_path_final <- cbind(subdat_avatar_path_final,time_step,x_revised,y_revised)
+  names(subdat_avatar_path_final) <- c("Position","Time","X","Y")
+    
+  # add the orientation of the avatar
+  subdat_avatar_path_final <- cbind(subdat_avatar_path_final,rep(0,nrow(subdat_avatar_path_final)))
+  names(subdat_avatar_path_final) <- c("Position","Time","X","Y","Orientation")
+  slope <- diff(subdat_avatar_path_final$X)/diff(subdat_avatar_path_final$Y)
+  degree <- atand(slope)
+  degree[which(degree<0)] <- 180 + degree[which(degree<0)] # get the continuous degree;
+  degree <- (-1)*degree # set the degree to the coordination in Unreal Engine;
+  degree <- smooth(degree) # smoothing the degree changing;
+  degree <- c(-90,degree) # add the start orientation;
+  subdat_avatar_path_final$Orientation <- degree
+  subdat_avatar_path_final$Orientation[2] <- subdat_avatar_path_final$Orientation[3] # a little change;
+    
+  # output the data
+  write.csv(subdat_avatar_path_final,paste0(paste0("./Path_using_in_Exp-2b/",paste("Position",subdat_avatar_path_final[1,1],sep = "_")),".csv"))
+}
+```
+
+```{r draw the X-Y plot of one person}
+Path_X_final$Position <- as.factor(Path_X_final$Position)
+
+write.csv(Path_X_final,"Path_Exp-2a.csv")
+
+ggplot(data=Path_X_final, aes(x=X, y=Y*(-1),group = Position)) + geom_line(aes(linetype = Position,color=Position),size=2) + ylab("Y (cm)") + xlab("X (cm)") + scale_x_continuous(breaks=seq(0, 700, 100),expand=c(0,0)) + scale_y_continuous(breaks=seq(-200, 200, 100),expand=c(0,0)) + coord_fixed(xlim=c(0, 700),ylim=c(-200, 200)) + theme_classic() + scale_color_npg() + scale_fill_npg() + theme(axis.title = element_text(size=20, colour="black"),
+  axis.text  = element_text(size=14, colour="black"),
+  axis.line = element_line(size=0.1),
+  strip.text = element_text(size=14, colour="black"),
+  legend.text = element_text(size=20, colour="black", margin = margin(r = 20, unit = "pt")),
+  legend.title = element_blank(),
+  legend.position = "top",
+  axis.ticks = element_line(size=0.3),
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length = unit(-0.1, "cm"),
+  legend.key.width = unit(1.5, "cm"),
+  panel.grid.major = element_line(colour = NA),
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.minor = element_blank())
+ggsave("Single_Path_All.pdf",width = 60, height = 30, units = "cm")
+
+```
+
+```{r calculate the MLD difference}
+MLD_Exp_2a <- data.frame()
+for (i in 1:length(subs)) 
+{
+  for (j in seq(-200,-50,50)) 
+  {
+    subdat_path <- subset(Path_X_subjectfinal,Sub==i & Position==j)
+    MLD_Exp_2a <- rbind(MLD_Exp_2a,subdat_path[which(subdat_path$Mean_Y==max(subdat_path$Mean_Y))[1],])
+    print(paste("Sub",i,"Positon",j,sep = "-"))
+  }
+}
+MLD_Exp_2a_final <- ddply(MLD_Exp_2a,c("Position"),summarise,Y = mean(Mean_Y),SE = (sd(Mean_Y)/sqrt(length(subs))))
+
+write.csv(MLD_Exp_2a_final,"MLD_Exp_2a.csv")
+write.csv(MLD_Exp_2a,"Sub_MLD_Exp_2a.csv")
+```

@@ -1,0 +1,230 @@
+---
+title: "Exp-1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(rstatix)
+library(bruceR)
+```
+
+```{r read the data and pre-process, include=FALSE}
+subs <- dir(path = "./Exp-1")
+subs <- mixedsort(subs)
+trialnum <- 110
+datall <- data.frame()
+Path_X <- data.frame()
+Path_Time <- data.frame()
+Walking_Time <- data.frame()
+for (i in 1:length(subs))
+{
+  dat <- read.table(paste0("./Exp-1",subs[i]), header = FALSE, sep = ";", na.strings = "NA", dec = ".", strip.white = TRUE)
+  dat <- dat[,1:6]
+  dat <- cbind(rep(i,nrow(dat)),dat)
+  names(dat) <- c("Sub","Trial","Time","Position","X","Y","Z")
+  dat$X[which(dat$Trial%%2==0)] <- (dat$X[which(dat$Trial%%2==0)]-700)*(-1)
+  dat$Y[which(dat$Trial%%2==0)] <- dat$Y[which(dat$Trial%%2==0)]*(-1)
+  for (j in 1:trialnum) 
+  {
+    subdat <- subset(dat,Trial==j)
+    
+    # add the pre-processed data to the data frame
+    datall <- rbind(datall,subdat)
+    
+    # change the position that "<0" to ">0" (position=-100 is the same as position=100)
+    if (subdat$Position[1]<0)
+    {
+      subdat$Position <- (-1) * subdat$Position
+      subdat$Y <- (-1) * subdat$Y
+    }
+    
+    # calculate the mean walking time
+    Walking_Time <- rbind(Walking_Time,subdat[nrow(subdat),])
+    
+    # do the linear interpolation of the path
+    subdat_revised <- subdat[,1:6]
+    subdat_revised <- rbind(list(subdat[1,1],subdat[1,2],0,subdat_revised[1,4],0,0),subdat_revised)
+    subdat_revised <- subdat_revised[!duplicated(subdat_revised$X),]
+    subdat_revised <- arrange(subdat_revised,X)
+    subdat_revised <- na.omit(subdat_revised)
+    
+    # get the Path_X
+    x_step <- seq(1,670,len = 670)
+    subdat_revised_x <- subdat_revised
+    y_revised <- interp1(subdat_revised_x$X,subdat_revised_x$Y,x_step,'linear')
+    subdat_revised_x_final <- data.frame("Sub"=rep(i,670),"Trial"=rep(j,670),"Position"=rep(subdat_revised_x$Position[1],670))
+    subdat_revised_x_final <- cbind(subdat_revised_x_final,x_step,y_revised)
+    names(subdat_revised_x_final) <- c("Sub","Trial","Position","X","Y")
+    
+    # reset the start point of path to (1,0)
+    subdat_revised_x_final$Y <- subdat_revised_x_final$Y - subdat_revised_x_final$Y[1]
+    
+    # get the passing side in this trial (0 means left, 1 means right)
+    subdat_revised_x_final <- cbind(subdat_revised_x_final,rep(0,nrow(subdat_revised_x_final)))
+    names(subdat_revised_x_final) <- c("Sub","Trial","Position","X","Y","Direction")
+    
+    if (subdat_revised_x_final$Y[351]>0)
+    {
+      subdat_revised_x_final$Direction <- 1
+    }
+    
+    Path_X <- rbind(Path_X,subdat_revised_x_final)
+    print(paste("Sub",i,"Trial",j,sep = "-"))
+  }
+}
+
+Path_X_subjectfinal <- ddply(Path_X,c("Sub","Position","X","Direction"),summarise,Mean_Y = mean(Y))
+Path_X_final <- ddply(Path_X_subjectfinal,c("Position","X","Direction"),summarise,Y = mean(Mean_Y),SE = (sd(Mean_Y)/sqrt(length(subs))))
+
+# calculate the mean finish time (98.76% of the trials finish in 12s)
+Walking_Time1 <- Walking_Time[which(Walking_Time$Time<12),]
+c(min(Walking_Time1$Time),mean(Walking_Time1$Time),max(Walking_Time1$Time))
+# mean finish time is 8s, so mean speed is 83cm/s.
+
+```
+
+```{r calculate the avatar path using in Exp-2}
+Path_Avatar <- Path_X_final
+for (i in seq(-100,100,20)) 
+{
+  if(i==-20 | i==0 | i==20){
+    for (j in c(0,1)) 
+    {
+      subdat_avatar_path <- subset(Path_Avatar,Position==i & Direction==j)
+      subdat_avatar_path <- rbind(list(subdat_avatar_path[1,1],0,subdat_avatar_path[1,3],0,0),subdat_avatar_path)
+      subdat_avatar_path <- cbind(subdat_avatar_path,seq(0,8,len = 671))
+      names(subdat_avatar_path) <- c("Position","X","Direction","Y","SE","Time")
+      
+      # do the linear interpolation of the path
+      time_step <- seq(0,8,0.014)
+      x_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$X,time_step,'linear')
+      y_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$Y,time_step,'linear')
+      subdat_avatar_path_final <- data.frame("Position"=rep(subdat_avatar_path$Position[1],length(time_step)),"Direction"=rep(subdat_avatar_path$Direction[1],length(time_step)))
+      subdat_avatar_path_final <- cbind(subdat_avatar_path_final,time_step,x_revised,y_revised)
+      names(subdat_avatar_path_final) <- c("Position","Direction","Time","X","Y")
+      
+      # add the orientation of the avatar
+      subdat_avatar_path_final <- cbind(subdat_avatar_path_final,rep(0,nrow(subdat_avatar_path_final)))
+      names(subdat_avatar_path_final) <- c("Position","Direction","Time","X","Y","Orientation")
+      slope <- diff(subdat_avatar_path_final$X)/diff(subdat_avatar_path_final$Y)
+      degree <- atand(slope)
+      degree[which(degree<0)] <- 180 + degree[which(degree<0)] # get the continuous degree;
+      degree <- (-1)*degree # set the degree to the coordination in Unreal Engine;
+      degree <- smooth(degree) # smoothing the degree changing;
+      degree <- c(-90,degree) # add the start orientation;
+      subdat_avatar_path_final$Orientation <- degree
+      subdat_avatar_path_final$Orientation[2] <- subdat_avatar_path_final$Orientation[3] # a little change;
+      
+      write.csv(subdat_avatar_path_final,paste0(paste0("./Path_using_in_Exp-2/",paste("Position",subdat_avatar_path_final[1,1],"Direction",subdat_avatar_path_final[1,2],sep = "_")),".csv"))
+    }
+  } else if (i>20){
+    subdat_avatar_path <- subset(Path_Avatar,Position==i & Direction==0)
+    subdat_avatar_path <- rbind(list(subdat_avatar_path[1,1],0,subdat_avatar_path[1,3],0,0),subdat_avatar_path)
+    subdat_avatar_path <- cbind(subdat_avatar_path,seq(0,8,len = 671))
+    names(subdat_avatar_path) <- c("Position","X","Direction","Y","SE","Time")
+      
+    # do the linear interpolation of the path
+    time_step <- seq(0,8,0.014)
+    x_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$X,time_step,'linear')
+    y_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$Y,time_step,'linear')
+    subdat_avatar_path_final <- data.frame("Position"=rep(subdat_avatar_path$Position[1],length(time_step)),"Direction"=rep(subdat_avatar_path$Direction[1],length(time_step)))
+    subdat_avatar_path_final <- cbind(subdat_avatar_path_final,time_step,x_revised,y_revised)
+    names(subdat_avatar_path_final) <- c("Position","Direction","Time","X","Y")
+    
+    # add the orientation of the avatar
+    subdat_avatar_path_final <- cbind(subdat_avatar_path_final,rep(0,nrow(subdat_avatar_path_final)))
+    names(subdat_avatar_path_final) <- c("Position","Direction","Time","X","Y","Orientation")
+    slope <- diff(subdat_avatar_path_final$X)/diff(subdat_avatar_path_final$Y)
+    degree <- atand(slope)
+    degree[which(degree<0)] <- 180 + degree[which(degree<0)] # get the continuous degree;
+    degree <- (-1)*degree # set the degree to the coordination in Unreal Engine;
+    degree <- smooth(degree) # smoothing the degree changing;
+    degree <- c(-90,degree) # add the start orientation;
+    subdat_avatar_path_final$Orientation <- degree
+    subdat_avatar_path_final$Orientation[2] <- subdat_avatar_path_final$Orientation[3] # a little change;
+      
+    write.csv(subdat_avatar_path_final,paste0(paste0("./Path_using_in_Exp-2/",paste("Position",subdat_avatar_path_final[1,1],"Direction",subdat_avatar_path_final[1,2],sep = "_")),".csv"))
+  } else {
+    subdat_avatar_path <- subset(Path_Avatar,Position==i & Direction==1)
+    subdat_avatar_path <- rbind(list(subdat_avatar_path[1,1],0,subdat_avatar_path[1,3],0,0),subdat_avatar_path)
+    subdat_avatar_path <- cbind(subdat_avatar_path,seq(0,8,len = 671))
+    names(subdat_avatar_path) <- c("Position","X","Direction","Y","SE","Time")
+      
+    # do the linear interpolation of the path
+    time_step <- seq(0,8,0.014)
+    x_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$X,time_step,'linear')
+    y_revised <- interp1(subdat_avatar_path$Time,subdat_avatar_path$Y,time_step,'linear')
+    subdat_avatar_path_final <- data.frame("Position"=rep(subdat_avatar_path$Position[1],length(time_step)),"Direction"=rep(subdat_avatar_path$Direction[1],length(time_step)))
+    subdat_avatar_path_final <- cbind(subdat_avatar_path_final,time_step,x_revised,y_revised)
+    names(subdat_avatar_path_final) <- c("Position","Direction","Time","X","Y")
+    
+    # add the orientation of the avatar
+    subdat_avatar_path_final <- cbind(subdat_avatar_path_final,rep(0,nrow(subdat_avatar_path_final)))
+    names(subdat_avatar_path_final) <- c("Position","Direction","Time","X","Y","Orientation")
+    slope <- diff(subdat_avatar_path_final$X)/diff(subdat_avatar_path_final$Y)
+    degree <- atand(slope)
+    degree[which(degree<0)] <- 180 + degree[which(degree<0)] # get the continuous degree;
+    degree <- (-1)*degree # set the degree to the coordination in Unreal Engine;
+    degree <- smooth(degree) # smoothing the degree changing;
+    degree <- c(-90,degree) # add the start orientation;
+    subdat_avatar_path_final$Orientation <- degree
+    subdat_avatar_path_final$Orientation[2] <- subdat_avatar_path_final$Orientation[3] # a little change;
+    
+    # output the data
+    write.csv(subdat_avatar_path_final,paste0(paste0("./Path_using_in_Exp-2/",paste("Position",subdat_avatar_path_final[1,1],"Direction",subdat_avatar_path_final[1,2],sep = "_")),".csv"))
+  }
+}
+```
+
+```{r calculate the subjects' choice and plot}
+datafinal <- data.frame()
+for (i in 1:length(subs)) 
+{
+  for (j in 1:trialnum) 
+  {
+    subdat_choice <- subset(Path_X, Sub==i & Trial==j)
+    datafinal <- rbind(datafinal,subdat_choice[which(subdat_choice$X==351),])
+    print(paste("Sub",i,"Trial",j,sep = "-"))
+  }
+}
+data_choice <- datafinal[,c(1:3,6)]
+
+data_choice_subjectfinal <- ddply(data_choice,c("Sub","Position"),summarise,Mean_P = mean(Direction))
+data_choice_final <- ddply(data_choice_subjectfinal,c("Position"),summarise,P = mean(Mean_P),SE = (sd(Mean_P)/sqrt(length(subs))))
+
+write.csv(data_choice_subjectfinal,"Sub_Choice_Exp-1.csv")
+write.csv(data_choice_final,"Choice_Exp-1.csv")
+
+# plot the data
+data_choice_final$P <- 1 - data_choice_final$P
+ggplot(data = data_choice_final[which(data_choice_final$Position!=0),],aes(x=Position,y=P)) + geom_point(size=2) + geom_line(aes(color="Red"),size=1) + geom_errorbar(aes(ymin=P-SE,ymax=P+SE), width=3,size=1) + ylab("Probability of walking from right") + xlab("The barrier position") + coord_cartesian(ylim=c(0,1)) + scale_x_continuous(breaks=seq(-100,100,20),expand=c(0.1,0.1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic() + theme(axis.title = element_text(size=15, colour="black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm")) + scale_fill_brewer(palette = "Pastel1")
+ ggsave("Choice_Line.pdf",width = 15, height = 15,units = "cm")
+```
+
+```{r statistic test}
+MANOVA(data = data_choice_subjectfinal,
+       subID = "Sub",
+       dv = "Mean_P",
+       within = c("Position"),
+       sph.correction = "GG")
+```

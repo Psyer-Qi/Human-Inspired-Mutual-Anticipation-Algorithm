@@ -1,0 +1,112 @@
+---
+title: "Exp-7"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(ez)
+library(sfsmisc)
+library(gtools)
+library(zoo)
+library(pracma)
+library(ggsignif)
+library(magrittr)
+library(gganimate)
+library(ggsci)
+library(rstatix)
+library(RColorBrewer)
+```
+
+```{r process the subjective report data and plot the results}
+library(readxl)
+report <- read_excel("Exp-7_Rating.xlsx")
+SubNum <- 25
+report <- report[1:(SubNum*12),-2]
+```
+
+```{r plot the result of questions in one graph}
+
+# Normalize the report score
+Rating_Subject <- data.frame()
+for (i in 1:SubNum)
+{
+  subdat <- subset(report,Sub==i)
+  subdat_revised <- data.frame()
+  for (j in 1:nrow(subdat)) 
+  {
+    for (k in 1:6) 
+    {
+      Q_list <- c("Q1","Q2","Q3","Q4","Q5","Q6")
+      sub_value <- (subdat[j,k+2]-min(subdat[,k+2]))/(max(subdat[,k+2])-min(subdat[,k+2]))
+      subdat_revised <- rbind(subdat_revised,list(subdat[j,1],subdat[j,2],Q_list[k],sub_value)) # normalize the rating of Q1~Q6
+    }
+  }
+  names(subdat_revised) <- c("Sub","Algorithm","Question","Rating")
+  subdat_revised$Sub <- as.character(subdat_revised$Sub)
+  subdat_revised$Algorithm <- as.character(subdat_revised$Algorithm)
+  subdat_revised$Rating <- as.numeric(subdat_revised$Rating)
+  
+  subdat_Subject <- ddply(subdat_revised,c("Sub","Algorithm","Question"),summarise,Mean_Rating = mean(Rating))
+  Rating_Subject <- rbind(Rating_Subject,subdat_Subject)
+}
+
+Rating_Final <- ddply(Rating_Subject,c("Algorithm","Question"),summarise,Rating = mean(Mean_Rating),SE = (sd(Mean_Rating)/sqrt(SubNum)))
+names(Rating_Final) <- c("Algorithm","Question","Rating","SE")
+
+Rating_Subject$Algorithm[which(Rating_Subject$Algorithm==1)] <- "L1"
+Rating_Subject$Algorithm[which(Rating_Subject$Algorithm==2)] <- "Nature"
+Rating_Subject$Algorithm[which(Rating_Subject$Algorithm==3)] <- "L2"
+Rating_Subject$Algorithm <- factor(Rating_Subject$Algorithm,levels = c("L1","Nature","L2"))
+
+Question_Name <- rep(c("Humanization","Comfort","Convenience","Reasoning","Flexibility","Intelligence"),times = 75)
+Rating_Subject$Question <- Question_Name
+Rating_Subject$Question <- factor(Rating_Subject$Question,levels = c("Humanization","Comfort","Convenience","Reasoning","Flexibility","Intelligence","Collision"))
+
+Rating_Final$Algorithm[which(Rating_Final$Algorithm==1)] <- "L1"
+Rating_Final$Algorithm[which(Rating_Final$Algorithm==2)] <- "Nature"
+Rating_Final$Algorithm[which(Rating_Final$Algorithm==3)] <- "L2"
+Rating_Final$Algorithm <- factor(Rating_Final$Algorithm,levels = c("L1","Nature","L2"))
+
+Question_Name <- rep(c("Humanization","Comfort","Convenience","Reasoning","Flexibility","Intelligence"),times = 3)
+Rating_Final$Question <- Question_Name
+Rating_Final$Question <- factor(Rating_Final$Question,levels = c("Humanization","Comfort","Convenience","Reasoning","Flexibility","Intelligence","Collision"))
+
+
+# plot the results
+ggplot(data = Rating_Final,aes(x=Algorithm,y=Rating,group = interaction(Question))) + geom_bar(stat = "identity",aes(fill=Algorithm),colour="black",width = 0.4,size=1,position=position_dodge(0.6)) + geom_errorbar(aes(ymin=Rating-SE,ymax=Rating+SE),width=0.15,size=1,position=position_dodge(0.6)) + xlab("Algorithm") + ylab("Rating") + facet_wrap(c("Question"),ncol = 6) + coord_cartesian(ylim=c(0,1)) + scale_y_continuous(breaks=seq(0,1,0.2),expand=c(0,0)) + theme_classic()  + scale_fill_manual(values = c(brewer.pal(9,"Blues")[3],brewer.pal(9,"Blues")[1],brewer.pal(9,"Blues")[4])) + theme(axis.title.y = element_text(size=20,colour = "black"),
+  axis.text  = element_text(size=15, colour="black"),
+  axis.title.x = element_blank(),
+  axis.line = element_line(size=0.8),
+  axis.ticks = element_line(size=0.8),
+  legend.text = element_text(size=15, colour="black"),
+  legend.title = element_text(size=15, colour="black"),
+  legend.position = "right",
+  axis.text.x = element_text(margin=margin(2, 0, 0, 0, "mm")),
+  axis.text.y = element_text(margin=margin(0, 2, 0, 0, "mm")),
+  axis.ticks.length=unit(-0.1, "cm"))
+ggsave(("./results/Question-All.pdf"), width = 40, height = 10, units = "cm")
+```
+
+```{r statistic test of subjective rating}
+subject_sta_test <- Rating_Subject
+
+subject_sta_test$Sub <- as.factor(subject_sta_test$Sub)
+subject_sta_test$Algorithm <- as.factor(subject_sta_test$Algorithm)
+subject_sta_test$Question <- as.factor(subject_sta_test$Question)
+
+# F-test
+MANOVA(data = subject_sta_test[which(subject_sta_test$Question=="Intelligence"),],
+       subID = "Sub",
+       dv = "Mean_Rating",
+       within = "Algorithm",
+       sph.correction = "GG") %>%
+  EMMEANS("Algorithm")
+
+MANOVA(data = subject_sta_test[which(subject_sta_test$Question=="Humanization"),],
+       subID = "Sub",
+       dv = "Mean_Rating",
+       within = "Algorithm") %>%
+  EMMEANS("Algorithm")
+```
